@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  @apply bg-paper text-ink font-sans antialiased;
+}
+
+::selection {
+  background: #efe4d0;
+}
+
+@layer components {
+  .eyebrow {
+    @apply text-[11px] uppercase tracking-eyebrow text-gold-deep font-medium;
+  }
+  .card {
+    @apply bg-white border border-line rounded-2xl shadow-card;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-ink px-6 py-3 text-sm font-medium text-paper transition hover:bg-ink-soft disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-full border border-line bg-white/60 px-6 py-3 text-sm font-medium text-ink transition hover:border-gold hover:text-gold-deep;
+  }
+  .rule {
+    @apply h-px w-full bg-gradient-to-r from-gold/60 via-gold/30 to-transparent;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.fade-in {
+  animation: fade-in 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-in {
+    animation: none;
+  }
+}
+
+@media print {
+  .fade-in {
+    animation: none;
+  }
+  @page {
+    margin: 14mm;
+  }
+  body {
+    background: white;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .card {
+    box-shadow: none;
+    break-inside: avoid;
+  }
+  .print-break {
+    break-before: page;
+  }
+}
