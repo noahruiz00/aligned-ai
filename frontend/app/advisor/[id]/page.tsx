@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { AlertTriangle, ArrowLeft, Check, ChevronDown, FileText, MessageCircle, Sparkles } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { CategoryCards, ScoreSummary } from "@/components/ScoreBreakdown";
 import { FadeIn, RichText, Spinner, STATUS, TopBar, ValueIcon } from "@/components/ui";
-import { api, type AdvisorClientDetail } from "@/lib/api";
+import { api, ApiError, type AdvisorClientDetail } from "@/lib/api";
 
 function List({ title, items }: { title: string; items: string[] }) {
   if (!items.length) return null;
@@ -30,9 +31,10 @@ export default function AdvisorClient({ params }: { params: { id: string } }) {
   const [note, setNote] = useState("");
   const [showTranscript, setShowTranscript] = useState(false);
 
+  const router = useRouter();
   useEffect(() => {
-    api.client(id).then(setD).catch((e) => setError(e.message));
-  }, [id]);
+    api.client(id).then(setD).catch((e) => (e instanceof ApiError && e.status === 401 ? router.replace(`/login?next=/advisor/${id}`) : setError(e.message)));
+  }, [id, router]);
 
   async function addNote(e: FormEvent) {
     e.preventDefault();
@@ -67,6 +69,18 @@ export default function AdvisorClient({ params }: { params: { id: string } }) {
               </div>
               <h1 className="mt-3 font-serif text-5xl">{d.user.name}</h1>
               <p className="mt-1 text-sm capitalize text-ink-muted">{d.user.household_type}</p>
+              {!d.shared && (
+                <div className="card mt-8 border-gold/40 bg-gold-pale/10 p-6">
+                  <p className="eyebrow">Profile not shared</p>
+                  <p className="mt-2 text-sm leading-relaxed text-ink-muted">
+                    This client hasn&apos;t shared their Wealth Purpose Profile with you{d.sharing === "pending_share" ? " yet; they have agreed to share it once their statement is drafted" : ""}.
+                    Until they do, only their name and progress are visible here{d.discovery_status ? ` (discovery ${d.discovery_status})` : ""}.
+                  </p>
+                </div>
+              )}
+              {d.qa && d.qa.extraction_runs > 0 && (
+                <p className="mt-3 text-[11px] text-ink-muted/70">QA · {d.qa.extraction_runs} extraction runs · {d.qa.rejected_insight_count} AI items rejected by validation</p>
+              )}
               {d.purpose && (
                 <div className="mt-8 border-l-2 border-gold pl-6">
                   <p className="eyebrow !text-[10px]">Wealth purpose</p>
@@ -142,11 +156,13 @@ export default function AdvisorClient({ params }: { params: { id: string } }) {
                 <CategoryCards score={d.score} audience="advisor" />
               </>
             ) : (
-              <div className="card p-8 text-sm text-ink-muted">
-                {d.purpose
-                  ? "The client has a Wealth Purpose Statement but hasn't completed their financial portrait yet, so no alignment score is available."
-                  : "The client is still in their discovery conversation."}
-              </div>
+              d.shared && (
+                <div className="card p-8 text-sm text-ink-muted">
+                  {d.purpose
+                    ? "The client has a Wealth Purpose Statement but hasn't completed their financial portrait yet, so no alignment score is available."
+                    : "The client is still in their discovery conversation."}
+                </div>
+              )
             )}
           </div>
 

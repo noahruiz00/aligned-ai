@@ -1,26 +1,27 @@
-"""Claude integration for the Wealth Purpose methodology.
+"""LLM integration (OpenRouter) for the Wealth Purpose methodology.
 
 Every public function has a deterministic demo implementation. It is used when no
-Claude credentials are configured (DEMO_MODE) and as a fallback if a Claude call
+OpenRouter credentials are configured (DEMO_MODE) and as a fallback if a model call
 fails or is declined, so a live walkthrough never dead-ends.
 """
 
 import json
 import logging
 
-import anthropic
+import openai
 
-from .config import CLAUDE_MODEL, DEMO_MODE
+from . import metrics
+from .config import OPENROUTER_API_KEY, OPENROUTER_BASE_URL, OPENROUTER_MODEL, DEMO_MODE
 
 log = logging.getLogger("aligned.ai")
 
-_client: anthropic.Anthropic | None = None
+_client: openai.OpenAI | None = None
 
 
-def _get_client() -> anthropic.Anthropic:
+def _get_client() -> openai.OpenAI:
     global _client
     if _client is None:
-        _client = anthropic.Anthropic(timeout=120.0, max_retries=2)
+        _client = openai.OpenAI(base_url=OPENROUTER_BASE_URL, api_key=OPENROUTER_API_KEY, timeout=120.0, max_retries=2)
     return _client
 
 
@@ -28,37 +29,55 @@ class AIUnavailable(Exception):
     pass
 
 
-def _claude(system: str, messages: list[dict], *, effort: str, max_tokens: int, schema: dict | None = None) -> str:
-    output_config: dict = {"effort": effort}
+def _llm(system: str, messages: list[dict], *, effort: str = "medium", max_tokens: int = 2000, schema: dict | None = None) -> str:
+    kwargs: dict = {}
     if schema:
-        output_config["format"] = {"type": "json_schema", "schema": schema}
+        kwargs["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {"name": "aligned_output", "strict": True, "schema": schema},
+        }
     try:
-        resp = _get_client().beta.messages.create(
-            model=CLAUDE_MODEL,
+        resp = _get_client().chat.completions.create(
+            model=OPENROUTER_MODEL,
             max_tokens=max_tokens,
-            system=system,
-            messages=messages,
-            output_config=output_config,
-            # Server-side refusal fallback: routes a declined request to a suitable model.
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
+            messages=[{"role": "system", "content": system}, *messages],
+            extra_body={"reasoning": {"effort": effort}},
+            **kwargs,
         )
-    except anthropic.APIError as e:
-        log.warning("Claude call failed: %s", e)
-        raise AIUnavailable(str(e)) from e
-    if resp.stop_reason == "refusal":
+    except openai.OpenAIError as e:
+        detail = str(e).replace(OPENROUTER_API_KEY, "***") if OPENROUTER_API_KEY else str(e)
+        log.warning("OpenRouter call failed: %s: %s", type(e).__name__, detail)
+        metrics.bump("model_errors", f"{type(e).__name__} {getattr(e, 'status_code', '') or ''}".strip())
+        raise AIUnavailable(detail) from e
+    # OpenRouter can return HTTP 200 with an error body and no choices.
+    if not resp.choices:
+        log.warning("OpenRouter returned no choices")
+        metrics.bump("model_errors", "no choices")
+        raise AIUnavailable("no choices")
+    usage = getattr(resp, "usage", None)
+    if usage is not None:
+        metrics.add_usage(getattr(usage, "prompt_tokens", 0), getattr(usage, "completion_tokens", 0))
+    choice = resp.choices[0]
+    if choice.finish_reason == "content_filter" or getattr(choice.message, "refusal", None):
         raise AIUnavailable("declined")
-    if resp.stop_reason == "max_tokens":
+    if choice.finish_reason == "length":
         raise AIUnavailable("truncated")
-    return "".join(b.text for b in resp.content if b.type == "text").strip()
+    text = (choice.message.content or "").strip()
+    if not text:
+        raise AIUnavailable("empty response")
+    return text
 
 
-def _claude_json(system: str, prompt: str, schema: dict, *, effort: str = "medium", max_tokens: int = 8000) -> dict:
-    text = _claude(system, [{"role": "user", "content": prompt}], effort=effort, max_tokens=max_tokens, schema=schema)
+def _llm_json(system: str, prompt: str, schema: dict, *, effort: str = "medium", max_tokens: int = 8000) -> dict:
+    text = _llm(system, [{"role": "user", "content": prompt}], effort=effort, max_tokens=max_tokens, schema=schema)
     try:
-        return json.loads(text)
+        data = json.loads(text)
     except json.JSONDecodeError as e:
         raise AIUnavailable("invalid json") from e
+    # Guard against a provider ignoring the schema: the callers index these keys directly.
+    if not isinstance(data, dict) or any(k not in data for k in schema["required"]):
+        raise AIUnavailable("unusable structured response")
+    return data
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +145,7 @@ def opening_message(name: str) -> str:
 
 
 def chat_reply(name: str, household: str, history: list[dict], answered: int) -> tuple[str, bool]:
-    """Returns (reply, used_claude). `history` includes the latest client message."""
+    """Returns (reply, used_llm). `history` includes the latest client message."""
     if not DEMO_MODE:
         if answered < len(GUIDE):
             focus = f"Next topic to explore: {GUIDE[answered][1]}"
@@ -138,7 +157,7 @@ def chat_reply(name: str, household: str, history: list[dict], answered: int) ->
         )
         messages = [{"role": m["role"], "content": m["content"]} for m in history]
         try:
-            return _claude(system, messages, effort="low", max_tokens=2000), True
+            return _llm(system, messages, effort="low", max_tokens=2000), True
         except AIUnavailable:
             pass
     return _demo_chat_reply(history[-1]["content"] if history else "", answered), False
@@ -212,7 +231,7 @@ def analyze_values(transcript: list[dict]) -> tuple[dict, bool]:
     text = "\n\n".join(f"{'CLIENT' if m['role'] == 'user' else 'GUIDE'}: {m['content']}" for m in transcript)
     if not DEMO_MODE:
         try:
-            return _claude_json(ANALYZE_SYSTEM, f"<conversation>\n{text}\n</conversation>", VALUES_SCHEMA), True
+            return _llm_json(ANALYZE_SYSTEM, f"<conversation>\n{text}\n</conversation>", VALUES_SCHEMA), True
         except AIUnavailable:
             pass
     return _demo_analyze([m["content"] for m in transcript if m["role"] == "user"]), False
@@ -326,7 +345,7 @@ def generate_purpose(name: str, household: str, values: dict) -> tuple[dict, boo
     if not DEMO_MODE:
         prompt = f"Client: {name}\nPlanning as: {household}\n<values_profile>\n{json.dumps(values, indent=2)}\n</values_profile>"
         try:
-            return _claude_json(PURPOSE_SYSTEM, prompt, PURPOSE_SCHEMA), True
+            return _llm_json(PURPOSE_SYSTEM, prompt, PURPOSE_SCHEMA), True
         except AIUnavailable:
             pass
     return _demo_purpose(household, values), False
@@ -397,7 +416,7 @@ def advisor_insights(name: str, values: dict | None, purpose: dict | None, score
             f"<alignment_score>\n{json.dumps(score, indent=2)}\n</alignment_score>"
         )
         try:
-            return _claude_json(INSIGHTS_SYSTEM, prompt, INSIGHTS_SCHEMA), True
+            return _llm_json(INSIGHTS_SYSTEM, prompt, INSIGHTS_SCHEMA), True
         except AIUnavailable:
             pass
     return _demo_insights(name, values, score), False
@@ -426,4 +445,153 @@ def _demo_insights(name: str, values: dict | None, score: dict) -> dict:
             f"Deep dive: {weakest['label']}",
             "Agree on one alignment action for the next 90 days",
         ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# 5. Progressive discovery (methodology modules)
+#
+# One small structured call per answer decides how to respond and whether a
+# single follow-up is worth asking; one call per module produces the short
+# "what we're hearing" reflection. Prompts above are untouched.
+
+TURN_SCHEMA = _obj(
+    reflection=_STR,
+    needs_follow_up={"type": "boolean"},
+    follow_up_index={"type": "integer"},
+    follow_up_question=_STR,
+)
+
+TURN_SYSTEM = f"""You are Aligned, a warm, perceptive wealth purpose guide working on behalf of a private \
+wealth advisory firm. A client is working through a structured discovery, one question at a time.
+
+{PHILOSOPHY}
+
+You receive the current module, the question just asked, the client's answer, what the advisor wants \
+this question to surface (guidance), the earlier answers in this module, the questions still to come, and \
+either a numbered list of the advisor's own follow-up questions for this section or permission to compose one.
+
+Respond with:
+- reflection: one or two sentences (under 45 words) reflecting back what you heard. Use the client's own \
+words where you can and name a value or feeling you noticed. Never diagnose, never tell them what they \
+value, never advise. If they skipped or answered very briefly, be gracious, not insistent.
+- needs_follow_up: true only when one follow-up would add real understanding: the answer is vague, \
+very short, or raises something important but unexplained. False if the answer is already specific, if the \
+client seems reluctant, or if an upcoming question will cover it anyway.
+- follow_up_index: when a numbered list of follow-up questions is provided and needs_follow_up is true, the \
+number of the one that best deepens this answer. 0 when needs_follow_up is false or none fits.
+- follow_up_question: only when you are told you may compose one: a single question, under 25 words, in the \
+client's own language, never repeating a question already asked or still to come. Otherwise an empty string.
+
+You never give financial, investment, tax, or legal advice, and never recommend products."""
+
+
+def discovery_turn(
+    name: str,
+    household: str,
+    module_title: str,
+    question: str,
+    guidance: str,
+    answer: str,
+    *,
+    is_follow_up: bool,
+    prior: list[tuple[str, str]],
+    upcoming: list[str],
+    candidates: list[str],
+    compose: bool,
+) -> tuple[dict, bool]:
+    """Returns ({reflection, needs_follow_up, follow_up_index, follow_up_question}, used_llm).
+
+    `candidates` are the advisor's follow-up questions available for this section; the model picks one by
+    number. `compose` allows a model-written follow-up when there is no pool. Neither -> no follow-up."""
+    allow = bool(candidates) or compose
+    if not DEMO_MODE:
+        prior_txt = "\n".join(f"Q: {q}\nA: {a}" for q, a in prior) or "(none yet)"
+        upcoming_txt = "\n".join(f"- {q}" for q in upcoming) or "(none)"
+        if candidates:
+            fu_txt = "Choose a follow-up by number from the advisor's questions, or 0:\n" + "\n".join(f"{i}. {q}" for i, q in enumerate(candidates, start=1))
+        elif compose:
+            fu_txt = "No advisor follow-up questions exist for this section. You may compose one if genuinely useful."
+        else:
+            fu_txt = "No follow-up is allowed for this answer; set needs_follow_up to false and follow_up_index to 0."
+        prompt = (
+            f"Client: {name} (planning as: {household})\nModule: {module_title}\n"
+            f"{'This answer is a reply to your follow-up question.' if is_follow_up else ''}\n"
+            f"<earlier_in_module>\n{prior_txt}\n</earlier_in_module>\n"
+            f"<question>{question}</question>\n<guidance>{guidance or '(none)'}</guidance>\n"
+            f"<answer>\n{answer}\n</answer>\n<still_to_come>\n{upcoming_txt}\n</still_to_come>\n<follow_up_options>\n{fu_txt}\n</follow_up_options>"
+        )
+        try:
+            out = _llm_json(TURN_SYSTEM, prompt, TURN_SCHEMA, effort="low", max_tokens=600)
+            idx = int(out.get("follow_up_index") or 0)
+            if not allow or not out.get("needs_follow_up"):
+                idx, out["follow_up_question"] = 0, ""
+            if candidates:
+                out["follow_up_question"] = candidates[idx - 1] if 1 <= idx <= len(candidates) else ""
+            elif compose:
+                out["follow_up_question"] = (out.get("follow_up_question") or "").strip()
+            out["follow_up_index"] = idx if candidates and out["follow_up_question"] else 0
+            out["needs_follow_up"] = bool(out["follow_up_question"])
+            return out, True
+        except AIUnavailable:
+            # Strict mode: a neutral acknowledgement and no follow-up, never demo text dressed up as the model.
+            return {"reflection": "Thank you. Your answer is saved.", "needs_follow_up": False, "follow_up_index": 0, "follow_up_question": ""}, False
+    return _demo_turn(answer, candidates, compose), False
+
+
+def _demo_turn(answer: str, candidates: list[str], compose: bool) -> dict:
+    values = [v["name"].lower() for v in _extract_values_demo(answer)[:2]]
+    if values:
+        v = values[0] + (f" and {values[1]}" if len(values) > 1 else "")
+        reflection = f"I'm hearing {v} in what you shared, and a real sense of intention behind it."
+    else:
+        reflection = "Thank you. That tells me something about what matters to you."
+    short = len(answer.split()) < 15
+    if short and candidates:
+        return {"reflection": reflection, "needs_follow_up": True, "follow_up_index": 1, "follow_up_question": candidates[0]}
+    if short and compose:
+        return {"reflection": reflection, "needs_follow_up": True, "follow_up_index": 0, "follow_up_question": "Could you say a little more about why that matters to you?"}
+    return {"reflection": reflection, "needs_follow_up": False, "follow_up_index": 0, "follow_up_question": ""}
+
+
+REFLECTION_SCHEMA = _obj(
+    summary=_STR,
+    themes={"type": "array", "items": _obj(name=_STR, note=_STR)},
+)
+
+REFLECTION_SYSTEM = f"""You help a private wealth advisory firm reflect back what a client has shared in one \
+module of a discovery conversation.
+
+{PHILOSOPHY}
+
+Write "what we're hearing" for the client to confirm or correct:
+- summary: two or three sentences in the second person, tentative in tone ("you describe", "you seem to"), \
+grounded only in what they said. Preserve their language. No advice, no diagnosis, no praise.
+- themes: two to four themes, each `name` one or two title-case words (e.g. Family, Freedom, Contribution) \
+and `note` one sentence on how it showed up in their answers, quoting or paraphrasing them.
+If the answers are thin, say less rather than inventing."""
+
+
+def module_reflection(name: str, household: str, module_title: str, exchanges: list[tuple[str, str]]) -> tuple[dict, bool]:
+    """Returns ({summary, themes: [{name, note}]}, used_llm)."""
+    if not DEMO_MODE:
+        txt = "\n\n".join(f"Q: {q}\nA: {a}" for q, a in exchanges)
+        prompt = f"Client: {name} (planning as: {household})\nModule: {module_title}\n<answers>\n{txt}\n</answers>"
+        try:
+            return _llm_json(REFLECTION_SYSTEM, prompt, REFLECTION_SCHEMA, effort="low", max_tokens=900), True
+        except AIUnavailable:
+            pass
+    return _demo_module_reflection(module_title, exchanges), False
+
+
+def _demo_module_reflection(module_title: str, exchanges: list[tuple[str, str]]) -> dict:
+    text = " ".join(a for _, a in exchanges)
+    themes = [{"name": v["name"], "note": v["why"]} for v in _extract_values_demo(text)[:3]]
+    if not themes:
+        themes = [{"name": "Intention", "note": "You answered thoughtfully, with a clear sense of what you care about."}]
+    names = ", ".join(t["name"].lower() for t in themes)
+    return {
+        "summary": f"In {module_title.lower()}, you keep returning to {names}. You describe these as things you want "
+        "your wealth to serve rather than things you want it to replace.",
+        "themes": themes,
     }

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { ArrowRight, Download } from "lucide-react";
 import { useEffect, useState } from "react";
+import { DraftStatement } from "@/components/DraftStatement";
 import { PurposeReport } from "@/components/PurposeReport";
 import { Spinner, TopBar } from "@/components/ui";
 import { api, type Dashboard } from "@/lib/api";
@@ -35,7 +36,11 @@ export default function StatementPage({ params }: { params: { id: string } }) {
       {data && !data.purpose && <p className="p-10 text-center text-ink-muted">No statement yet. Complete the discovery conversation first.</p>}
       {data?.purpose && (
         <div className="px-5 pt-10 sm:px-8">
-          <PurposeReport name={data.user.name} purpose={data.purpose} values={data.values} date={data.purpose_created_at} />
+          {data.purpose_sections ? (
+            <DraftStatement name={data.user.name} sections={data.purpose_sections} purpose={data.purpose} date={data.purpose_created_at} />
+          ) : (
+            <PurposeReport name={data.user.name} purpose={data.purpose} values={data.values} date={data.purpose_created_at} />
+          )}
           {!data.score && (
             <div className="no-print mx-auto mt-16 max-w-4xl">
               <div className="card flex flex-col items-start justify-between gap-6 p-8 sm:flex-row sm:items-center">

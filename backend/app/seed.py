@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import ai, scoring
+from .methodology import seed_methodology
 from .models import AdvisorNote, AlignmentScore, Conversation, PurposeStatement, User, ValueProfile
 from .schemas import FinancialPortrait
 
@@ -85,6 +86,7 @@ MEHTA_ANSWERS = [
 
 
 def seed(db: Session) -> None:
+    seed_methodology(db)
     if db.scalars(select(User).where(User.role == "advisor")).first():
         return
     now = datetime.now(timezone.utc)
@@ -101,7 +103,7 @@ def seed(db: Session) -> None:
         messages=[{"role": r, "content": c, "stage": ai.stage_for(i // 2)} for i, (r, c) in enumerate(SARAH_TRANSCRIPT)],
     ))
     db.add(ValueProfile(user_id=sarah.id, data=SARAH_VALUES))
-    db.add(PurposeStatement(user_id=sarah.id, data=SARAH_PURPOSE))
+    db.add(PurposeStatement(user_id=sarah.id, data=SARAH_PURPOSE, status="legacy"))
     result = scoring.calculate(SARAH_PORTRAIT, SARAH_VALUES)
     insights = {
         "summary": "Sarah is a purpose-led parent anchored by education, climate impact, and openness with her daughters. "
@@ -146,7 +148,7 @@ def seed(db: Session) -> None:
         msgs.append({"role": "assistant", "content": ai._demo_chat_reply(a, i + 1), "stage": ai.stage_for(i + 1)})
     db.add(Conversation(user_id=mehta.id, status="complete", messages=msgs))
     db.add(ValueProfile(user_id=mehta.id, data=values))
-    db.add(PurposeStatement(user_id=mehta.id, data=ai._demo_purpose("couple", values)))
+    db.add(PurposeStatement(user_id=mehta.id, data=ai._demo_purpose("couple", values), status="legacy"))
 
     # 3. Prospect mid-discovery
     james = User(name="James Whitfield", household_type="individual", advisor_id=advisor.id, created_at=now - timedelta(days=1))

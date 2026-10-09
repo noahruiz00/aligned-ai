@@ -1,18 +1,25 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowUpRight, Plus } from "lucide-react";
+import { ArrowUpRight, LogOut, Plus, SlidersHorizontal } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { FadeIn, ScoreRing, Spinner, STATUS, TopBar } from "@/components/ui";
-import { api, type ClientSummary } from "@/lib/api";
+import { api, ApiError, type ClientSummary } from "@/lib/api";
 
 export default function AdvisorHome() {
+  const router = useRouter();
   const [clients, setClients] = useState<ClientSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.clients().then(setClients).catch((e) => setError(e.message));
-  }, []);
+    api.clients().then(setClients).catch((e) => (e instanceof ApiError && e.status === 401 ? router.replace("/login?next=/advisor") : setError(e.message)));
+  }, [router]);
+
+  async function logout() {
+    await api.logout();
+    router.replace("/login");
+  }
 
   const scored = clients?.filter((c) => c.overall !== null) ?? [];
   const avg = scored.length ? Math.round(scored.reduce((s, c) => s + (c.overall ?? 0), 0) / scored.length) : null;
@@ -23,9 +30,18 @@ export default function AdvisorHome() {
         right={
           <>
             <span className="hidden rounded-full bg-ink px-3 py-1 text-xs text-paper sm:inline">Advisor</span>
+            <Link href="/admin/methodology" className="btn-ghost !px-4 !py-2">
+              <SlidersHorizontal className="h-4 w-4" /> <span className="hidden sm:inline">Methodology</span>
+            </Link>
+            <Link href="/admin/clients" className="btn-ghost !px-4 !py-2">
+              <span className="hidden sm:inline">Beta admin</span><span className="sm:hidden">QA</span>
+            </Link>
             <Link href="/discover" className="btn-ghost !px-4 !py-2">
               <Plus className="h-4 w-4" /> New discovery
             </Link>
+            <button onClick={logout} className="btn-ghost !px-4 !py-2" aria-label="Sign out">
+              <LogOut className="h-4 w-4" />
+            </button>
           </>
         }
       />
@@ -62,9 +78,11 @@ export default function AdvisorHome() {
                         <h2 className="font-serif text-2xl">{c.name}</h2>
                         <span className={`rounded-full px-2.5 py-0.5 text-[11px] ${STATUS[c.status].cls}`}>{STATUS[c.status].label}</span>
                         <span className="text-xs capitalize text-ink-muted">{c.household_type}</span>
+                        {!c.shared && <span className="rounded-full bg-cream px-2.5 py-0.5 text-[11px] text-ink-muted">Not shared yet</span>}
+                        {c.sharing === "pending_share" && <span className="rounded-full bg-gold-pale/60 px-2.5 py-0.5 text-[11px] text-gold-deep">Will share on completion</span>}
                       </div>
                       <p className="mt-2 truncate font-serif text-lg italic text-ink-muted">
-                        {c.purpose ? `“${c.purpose}”` : "Discovery conversation in progress"}
+                        {c.purpose ? `“${c.purpose}”` : c.shared ? "Discovery conversation in progress" : "The client hasn't shared their profile yet"}
                       </p>
                       {c.values.length > 0 && (
                         <div className="mt-3 flex flex-wrap gap-1.5">
