@@ -1,5 +1,9 @@
-// Same-origin by default (proxied by next.config.mjs), so the HttpOnly cookies ride along automatically.
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "/api";
+// Always same-origin: the API is proxied under /api (next.config.mjs) so the HttpOnly session cookies are
+// first-party. A cross-origin NEXT_PUBLIC_API_URL would make the browser withhold those cookies (SameSite=Lax):
+// starting a discovery would work and every following call would be "no active session". Only a relative
+// value is honoured; anything else is ignored.
+const configured = process.env.NEXT_PUBLIC_API_URL || "";
+const API_URL = configured.startsWith("/") ? configured.replace(/\/$/, "") : "/api";
 
 export class ApiError extends Error {
   status: number;

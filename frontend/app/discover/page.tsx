@@ -7,7 +7,7 @@ import { FormEvent, KeyboardEvent, Suspense, useCallback, useEffect, useRef, use
 import { ClientReview } from "@/components/ClientReview";
 import { DiscoveryProgress } from "@/components/DiscoveryProgress";
 import { FadeIn, Logo, Spinner, TopBar } from "@/components/ui";
-import { api, type DiscoveryState, type Exchange, type Household, type Turn } from "@/lib/api";
+import { api, ApiError, type DiscoveryState, type Exchange, type Household, type Turn } from "@/lib/api";
 
 export default function DiscoverPage() {
   return (
@@ -17,7 +17,7 @@ export default function DiscoverPage() {
   );
 }
 
-type View = "intake" | "question" | "module_done" | "review" | "paused" | "generating";
+type View = "intake" | "question" | "module_done" | "review" | "paused" | "generating" | "lost";
 
 function Discover() {
   const router = useRouter();
@@ -47,6 +47,18 @@ function Discover() {
     try {
       return await fn();
     } catch (e) {
+      if (e instanceof ApiError && e.status === 401) {
+        // The backend could not see a session cookie. Re-check before concluding anything: if the session is
+        // still there, re-sync and let the client retry; only when it is truly gone do we say so.
+        try {
+          const s = await api.discovery();
+          setState(s);
+          setError("Your session was re-synced. Please try that once more.");
+        } catch {
+          setView("lost");
+        }
+        return undefined;
+      }
       setError(e instanceof Error ? e.message : "Something went wrong");
     } finally {
       setBusy(false);
@@ -130,6 +142,33 @@ function Discover() {
       <main className="min-h-screen">
         <TopBar />
         <Spinner label="Drafting your Wealth Purpose Statement from what you confirmed…" />
+      </main>
+    );
+  }
+
+  if (view === "lost") {
+    // Shown only after a live request was refused AND a fresh check confirmed there is no session on this device.
+    return (
+      <main className="min-h-screen">
+        <TopBar />
+        <div className="mx-auto max-w-xl px-5 py-20 text-center sm:px-8">
+          <FadeIn>
+            <p className="eyebrow">Session not found</p>
+            <h1 className="mt-4 font-serif text-4xl">We can&apos;t find your discovery on this device.</h1>
+            <p className="mt-4 leading-relaxed text-ink-muted">
+              Your answers are saved. If you have your private resume link, open it to carry on exactly where you were. If not, you can begin a
+              new discovery.
+            </p>
+            <div className="mt-8 flex flex-wrap justify-center gap-3">
+              <button onClick={() => { setState(null); setResume(null); setView("intake"); }} className="btn-primary">
+                Begin a new discovery <ArrowRight className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="mt-6 text-xs leading-relaxed text-ink-muted">
+              Private links look like <code className="rounded bg-cream px-1.5 py-0.5">…/discover/resume/…</code> and were shown when you paused.
+            </p>
+          </FadeIn>
+        </div>
       </main>
     );
   }
@@ -300,7 +339,7 @@ function Intake({ onStart, busy, error, resume, onResume, onDiscard }: {
             {error && <p className="text-sm text-amber">{error}</p>}
           </form>
         </FadeIn>
-        <p className="mt-6 text-center text-[11px] text-ink-muted/70">
+        <p className="mt-6 text-center text-xs leading-relaxed text-ink-muted">
           Nothing is shared with your advisor until you choose to share it. This is not financial advice.
         </p>
       </div>
@@ -476,7 +515,7 @@ function Question({ state, lastTurn, busy, error, onAnswer, onSkip, onDecline, o
           </div>
         </div>
         {error && <p className="mt-3 text-sm text-amber">{error}</p>}
-        <p className="mt-3 text-center text-[11px] text-ink-muted/70">
+        <p className="mt-3 text-center text-xs leading-relaxed text-ink-muted">
           Press Enter to continue, Shift+Enter for a new line. Nothing here is required: skip, decline, or pause at any point. Your progress saves automatically.
         </p>
       </div>

@@ -15,7 +15,7 @@ export function DiscoveryProgress({ steps, pct, compact = false }: { steps: Step
           <p className="eyebrow">
             Discovery <span className="ml-2 font-serif text-base normal-case tracking-normal text-ink">{pct}%</span>
           </p>
-          <p className="truncate text-xs text-ink-muted">
+          <p className="max-w-[60%] text-right text-xs leading-snug text-ink-muted">
             {lastDone && <span className="hidden sm:inline">{lastDone.title} completed · </span>}
             {current && (
               <span className="text-ink-soft">
@@ -28,11 +28,11 @@ export function DiscoveryProgress({ steps, pct, compact = false }: { steps: Step
           <motion.div className="h-full bg-gradient-to-r from-gold-light to-gold-deep" animate={{ width: `${pct}%` }} transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }} />
         </div>
         {!compact && (
-          <ol className="mt-4 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none]">
+          <ol className="mt-4 flex flex-wrap gap-x-2 gap-y-1.5">
             {steps.map((s) => (
               <li
                 key={s.key}
-                className={`flex shrink-0 items-center gap-2 rounded-full border px-3 py-1 text-xs transition ${
+                className={`flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] transition sm:gap-2 sm:px-3 sm:text-xs ${
                   s.status === "in_progress"
                     ? "border-gold bg-gold-pale/40 text-ink"
                     : s.status === "completed"

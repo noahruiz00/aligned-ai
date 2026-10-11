@@ -245,7 +245,7 @@ function InsightCard({ insight: i, state, busy, onFeedback, onEdit }: {
           </p>
           {i.evidence.map((e) => (
             <div key={e.id} className="text-sm">
-              <p className="text-[11px] text-ink-muted">
+              <p className="text-xs leading-snug text-ink-muted">
                 {e.module}{e.section ? ` › ${e.section}` : ""}
                 {prompts.get(e.question_id) && <span className="italic"> — “{prompts.get(e.question_id)}”</span>}
               </p>

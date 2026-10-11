@@ -73,7 +73,7 @@ On first start the API creates its tables and seeds a demo book of three fiction
 | Variable | Default | Purpose |
 |---|---|---|
 | `API_URL` | `http://localhost:8000` | Where Next.js proxies `/api/*` (server-side). The browser only ever talks to the frontend origin, so the HttpOnly cookies stay first-party |
-| `NEXT_PUBLIC_API_URL` | unset (`/api`) | Leave unset. Pointing the browser straight at a different origin breaks cookie-based sign-in |
+| `NEXT_PUBLIC_API_URL` | unset (`/api`) | Leave unset. The browser only honours a relative value; an absolute URL is ignored because a cross-origin API would make the browser withhold the session cookies ("No active discovery session" after the first question) |
 
 **Demo vs. real beta.** With no `OPENROUTER_API_KEY` (or `DEMO_MODE=true`) every AI step uses a deterministic
 stand-in and the UI says so. With a key configured the app is in strict mode: a model failure shows an honest error
